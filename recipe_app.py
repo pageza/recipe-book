@@ -2,6 +2,7 @@
 import os
 import threading
 import sqlite3
+import json
 import openai
 import gi
 
@@ -123,7 +124,12 @@ class RecipeApp(Gtk.Window):
 
     def generate_recipe_api(self, prompt):
         messages = [
-            {"role": "system", "content": "You are a recipe generating assistant."},
+            {"role": "system", "content": (
+                "You are a recipe generating assistant. When given a prompt, generate a recipe "
+                "as a JSON object with the following keys: 'name' (string), 'ingredients' (a comma-separated string), "
+                "'calories' (an integer), and 'recipe_text' (string with full instructions). "
+                "Ensure the JSON is valid." 
+            )},
             {"role": "user", "content": prompt},
         ]
         try:
@@ -133,22 +139,39 @@ class RecipeApp(Gtk.Window):
                 temperature=0.7,
                 max_tokens=500,
             )
-            recipe_text = response.choices[0].message.content.strip()
+            raw_text = response.choices[0].message.content.strip()
+            try:
+                recipe_data = json.loads(raw_text)
+                self.generated_recipe = recipe_data
+                # Prepare a formatted string for the text view:
+                formatted_text = (
+                    f"Recipe Name: {recipe_data.get('name', '')}\n"
+                    f"Ingredients: {recipe_data.get('ingredients', '')}\n"
+                    f"Calories: {recipe_data.get('calories', '')}\n\n"
+                    f"Instructions:\n{recipe_data.get('recipe_text', '')}"
+                )
+            except json.JSONDecodeError as e:
+                self.generated_recipe = None
+                formatted_text = raw_text  # Fallback if parsing fails
         except Exception as e:
-            recipe_text = f"Error generating recipe: {e}"
-        GLib.idle_add(self.update_output, recipe_text)
+            formatted_text = f"Error generating recipe: {e}"
+            self.generated_recipe = None
+
+        GLib.idle_add(self.update_output, formatted_text)
 
     def update_output(self, text):
         self.output_buffer.insert(self.output_buffer.get_end_iter(), text + "\n")
         self.generate_button.set_sensitive(True)
 
     def on_save_recipe(self, widget):
+        # Get the current recipe text from the output buffer.
         start, end = self.output_buffer.get_bounds()
         recipe_text = self.output_buffer.get_text(start, end, True).strip()
         if not recipe_text:
             self.show_message("No recipe available to save.")
             return
 
+        # Create the Save dialog.
         dialog = Gtk.Dialog(title="Save Recipe", parent=self, flags=0)
         dialog.add_buttons(
             Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
@@ -172,6 +195,12 @@ class RecipeApp(Gtk.Window):
         grid.attach(cal_label, 0, 2, 1, 1)
         cal_entry = Gtk.Entry()
         grid.attach(cal_entry, 1, 2, 1, 1)
+
+        # If generated_recipe is available, pre-populate the fields.
+        if hasattr(self, 'generated_recipe') and self.generated_recipe:
+            name_entry.set_text(self.generated_recipe.get('name', ''))
+            ingredients_entry.set_text(self.generated_recipe.get('ingredients', ''))
+            cal_entry.set_text(str(self.generated_recipe.get('calories', '')))
 
         dialog.show_all()
         response = dialog.run()
