@@ -1,0 +1,29 @@
+{
+  "name": "Recipe App DevContainer",
+  "workspaceFolder": "/workspaces/recipe-book",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "settings": {
+    "terminal.integrated.shell.linux": "/bin/bash"
+  },
+  "mounts": [
+    "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
+  ],
+  "runArgs": [
+    "--env", "DISPLAY=${env:DISPLAY}"
+  ],
+  "remoteUser": "root",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "GitHub.vscode-pull-request-github",
+        "ms-python.vscode-pylance",
+        "ms-python.python",
+        "ms-python.debugpy"
+      ]
+    }
+  }
+}
