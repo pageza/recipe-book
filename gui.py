@@ -54,45 +54,84 @@ class RecipeApp(Gtk.Window):
         self.generator_box.pack_start(button_box, False, False, 0)
 
     def create_recipe_book_tab(self):
+        # Create a vertical box for the entire tab.
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        
+        # --- Search Bar ---
         search_box = Gtk.Box(spacing=10)
         self.search_entry = Gtk.Entry()
         self.search_entry.set_placeholder_text("Search by name or ingredient")
         self.search_entry.connect("changed", self.on_search_changed)
         search_box.pack_start(self.search_entry, True, True, 0)
-
+        
         self.filter_cal_entry = Gtk.Entry()
         self.filter_cal_entry.set_placeholder_text("Max calories (optional)")
         self.filter_cal_entry.connect("changed", self.on_search_changed)
         search_box.pack_start(self.filter_cal_entry, True, True, 0)
-
-        self.book_box.pack_start(search_box, False, False, 0)
-
-        self.recipe_liststore = Gtk.ListStore(int, str, int)
+        
+        vbox.pack_start(search_box, False, False, 0)
+        
+        # --- Horizontal Paned Container for List and Detail ---
+        hpaned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        
+        # Left Pane: Recipe List with Checkboxes.
+        # Create a ListStore with 4 columns:
+        #   0: Boolean for checkbox,
+        #   1: Recipe ID (int),
+        #   2: Recipe Name (str),
+        #   3: Calories (int)
+        self.recipe_liststore = Gtk.ListStore(bool, int, str, int)
         self.treeview = Gtk.TreeView(model=self.recipe_liststore)
-
+        
+        # Column 0: Checkbox
+        renderer_toggle = Gtk.CellRendererToggle()
+        renderer_toggle.connect("toggled", self.on_toggle_selected)
+        column_toggle = Gtk.TreeViewColumn("Select", renderer_toggle, active=0)
+        self.treeview.append_column(column_toggle)
+        
+        # Column 1: Recipe Name
         renderer_text = Gtk.CellRendererText()
-        column_name = Gtk.TreeViewColumn("Recipe Name", renderer_text, text=1)
+        column_name = Gtk.TreeViewColumn("Recipe Name", renderer_text, text=2)
         self.treeview.append_column(column_name)
+        
+        # Column 2: Calories
         renderer_cal = Gtk.CellRendererText()
-        column_cal = Gtk.TreeViewColumn("Calories", renderer_cal, text=2)
+        column_cal = Gtk.TreeViewColumn("Calories", renderer_cal, text=3)
         self.treeview.append_column(column_cal)
-
+        
+        # (Optional) Connect selection changes to update the detail view.
         self.treeview.get_selection().connect("changed", self.on_recipe_selected)
-        scrolled_tree = Gtk.ScrolledWindow()
-        scrolled_tree.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scrolled_tree.add(self.treeview)
-        self.book_box.pack_start(scrolled_tree, True, True, 0)
-
+        
+        # Put the treeview into a scrolled window.
+        scrolled_list = Gtk.ScrolledWindow()
+        scrolled_list.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled_list.add(self.treeview)
+        
+        hpaned.add1(scrolled_list)
+        
+        # Right Pane: Recipe Detail View.
         self.detail_view = Gtk.TextView()
         self.detail_view.set_editable(False)
         self.detail_view.set_wrap_mode(Gtk.WrapMode.WORD)
         scrolled_detail = Gtk.ScrolledWindow()
         scrolled_detail.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scrolled_detail.set_min_content_height(150)
         scrolled_detail.add(self.detail_view)
-        self.book_box.pack_start(scrolled_detail, False, False, 0)
+        
+        hpaned.add2(scrolled_detail)
+        
+        vbox.pack_start(hpaned, True, True, 0)
+        
+        # --- Delete Button ---
+        delete_button = Gtk.Button(label="Delete Selected")
+        delete_button.connect("clicked", self.on_delete_selected)
+        vbox.pack_start(delete_button, False, False, 0)
+        
+        # Add the entire layout to the book_box container.
+        self.book_box.pack_start(vbox, True, True, 0)
+        
+        # Load recipes initially.
+        self.refresh_recipes()
 
-        self.load_recipes()
 
     def on_generate_recipe(self, widget):
         prompt = self.prompt_entry.get_text().strip()
@@ -217,36 +256,28 @@ class RecipeApp(Gtk.Window):
         conn.commit()
         conn.close()
         self.show_message("Recipe saved successfully!")
-        self.load_recipes()
+        self.refresh_recipes()
 
-    def load_recipes(self):
+    def refresh_recipes(self):
         self.recipe_liststore.clear()
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        query = "SELECT id, name, calories, ingredients FROM recipes WHERE 1=1"
-        params = []
+        from db import load_recipes as db_refresh_recipes  # Import with a different name.
         search_text = self.search_entry.get_text().strip()
-        if search_text:
-            query += " AND (name LIKE ? OR ingredients LIKE ? OR recipe_text LIKE ?)"
-            like_param = f"%{search_text}%"
-            params.extend([like_param, like_param, like_param])
-        max_cal = self.filter_cal_entry.get_text().strip()
-        if max_cal.isdigit():
-            query += " AND calories <= ?"
-            params.append(int(max_cal))
-        c.execute(query, params)
-        for row in c.fetchall():
-            self.recipe_liststore.append([row[0], row[1], row[2]])
-        conn.close()
+        recipes = db_refresh_recipes(search_text)
+        for recipe in recipes:
+            # Append each recipe. For our list store, we assume a row: [False, id, name, calories].
+            self.recipe_liststore.append([False, recipe[0], recipe[1], recipe[2]])
 
     def on_search_changed(self, widget):
-        self.load_recipes()
+        self.refresh_recipes()
 
     def on_recipe_selected(self, selection):
         model, treeiter = selection.get_selected()
         if treeiter is None:
             return
-        recipe_id = model[treeiter][0]
+        recipe_id = model[treeiter][1]  # Column 1 holds the recipe ID.
+        # Retrieve full recipe details.
+        import sqlite3
+        from db import DB_FILE
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("SELECT recipe_text FROM recipes WHERE id = ?", (recipe_id,))
@@ -256,120 +287,26 @@ class RecipeApp(Gtk.Window):
             detail_buffer = self.detail_view.get_buffer()
             detail_buffer.set_text(row[0])
 
-    def show_message(self, message):
-        dialog = Gtk.MessageDialog(
-            transient_for=self,
-            flags=0,
-            message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK,
-            text=message,
-        )
-        dialog.run()
-        dialog.destroy()
 
+    def on_toggle_selected(self, widget, path):
+        # Toggle the boolean value in the list store at the given path.
+        current_value = self.recipe_liststore[path][0]
+        self.recipe_liststore[path][0] = not current_value
 
-def load_recipes(self):
-    """Loads recipes from the database and populates the ListStore."""
-    from db import load_recipes  # Ensure your db module is accessible.
-    self.recipe_liststore.clear()
-    # Optionally, get the search text for filtering.
-    search_text = self.search_entry.get_text() if hasattr(self, 'search_entry') else ""
-    # Load recipes; ensure load_recipes returns a list of tuples (id, name, calories, ingredients).
-    recipes = load_recipes(search_text)
-    for recipe in recipes:
-        # Append each recipe. Here recipe is assumed to be (id, name, calories, ingredients).
-        self.recipe_liststore.append([recipe[0], recipe[1], recipe[2]])
-
-def on_search_changed(self, widget):
-    """Refresh the recipe list when the search text changes."""
-    self.load_recipes()
-
-def on_recipe_selected(self, selection):
-    """Display full recipe details when a recipe is selected."""
-    model, treeiter = selection.get_selected()
-    if treeiter is None:
-        return
-    recipe_id = model[treeiter][0]
-    # Retrieve full recipe details from the database.
-    import sqlite3
-    from db import DB_FILE  # assuming you export DB_FILE in db.py
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT recipe_text FROM recipes WHERE id = ?", (recipe_id,))
-    row = c.fetchone()
-    conn.close()
-    if row:
-        detail_buffer = self.detail_view.get_buffer()
-        detail_buffer.set_text(row[0])
-
-
-    def on_generate_recipe(self, widget):
-        prompt = self.prompt_entry.get_text().strip()
-        if not prompt:
-            self.show_message("Please enter a recipe prompt or modification instruction.")
-            return
-        self.generate_button.set_sensitive(False)
-        self.output_buffer.insert(self.output_buffer.get_end_iter(), "\nGenerating recipe...\n")
-        # Call the OpenAI integration module.
-        generate_recipe(prompt, self.update_recipe_output)
-
-    def update_recipe_output(self, text, recipe_data):
-        self.output_buffer.insert(self.output_buffer.get_end_iter(), text + "\n")
-        self.generate_button.set_sensitive(True)
-        self.generated_recipe = recipe_data
-
-    def on_save_recipe(self, widget):
-        # Build a dialog to save the recipe.
-        start, end = self.output_buffer.get_bounds()
-        recipe_text = self.output_buffer.get_text(start, end, True).strip()
-        if not recipe_text:
-            self.show_message("No recipe available to save.")
-            return
-
-        dialog = Gtk.Dialog(title="Save Recipe", parent=self, flags=0)
-        dialog.add_buttons(
-            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-            Gtk.STOCK_OK, Gtk.ResponseType.OK,
-        )
-        box = dialog.get_content_area()
-        grid = Gtk.Grid(column_spacing=10, row_spacing=10, margin=10)
-        box.add(grid)
-
-        name_label = Gtk.Label(label="Recipe Name:")
-        grid.attach(name_label, 0, 0, 1, 1)
-        name_entry = Gtk.Entry()
-        grid.attach(name_entry, 1, 0, 1, 1)
-
-        ingredients_label = Gtk.Label(label="Ingredients (comma-separated):")
-        grid.attach(ingredients_label, 0, 1, 1, 1)
-        ingredients_entry = Gtk.Entry()
-        grid.attach(ingredients_entry, 1, 1, 1, 1)
-
-        cal_label = Gtk.Label(label="Estimated Calories:")
-        grid.attach(cal_label, 0, 2, 1, 1)
-        cal_entry = Gtk.Entry()
-        grid.attach(cal_entry, 1, 2, 1, 1)
-
-        # If a recipe was generated, pre-populate the fields.
-        if self.generated_recipe:
-            name_entry.set_text(self.generated_recipe.get('name', ''))
-            ingredients_entry.set_text(self.generated_recipe.get('ingredients', ''))
-            cal_entry.set_text(str(self.generated_recipe.get('calories', '')))
-        dialog.show_all()
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            name = name_entry.get_text().strip() or "Unnamed Recipe"
-            ingredients = ingredients_entry.get_text().strip()
-            try:
-                calories = int(cal_entry.get_text().strip())
-            except ValueError:
-                calories = 0
-            # Use our db module to save the recipe.
-            from db import save_recipe
-            save_recipe(name, ingredients, recipe_text, calories)
-            self.show_message("Recipe saved successfully!")
-            # Optionally, refresh the recipe book tab here.
-        dialog.destroy()
+    def on_delete_selected(self, widget):
+        from db import delete_recipe  # Ensure delete_recipe is defined in db.py.
+        to_delete = []
+        # Iterate over the list store to collect IDs of selected recipes.
+        for row in self.recipe_liststore:
+            if row[0]:  # If checkbox is checked.
+                recipe_id = row[1]
+                to_delete.append(recipe_id)
+        # Delete each selected recipe from the database.
+        for recipe_id in to_delete:
+            delete_recipe(recipe_id)
+        # Refresh the list.
+        self.refresh_recipes()
+        self.show_message("Selected recipes deleted.")
 
     def show_message(self, message):
         dialog = Gtk.MessageDialog(
@@ -381,3 +318,4 @@ def on_recipe_selected(self, selection):
         )
         dialog.run()
         dialog.destroy()
+

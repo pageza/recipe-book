@@ -44,3 +44,11 @@ def load_recipes(search_text="", max_cal=None):
     results = c.fetchall()
     conn.close()
     return results
+
+def delete_recipe(recipe_id):
+    """Delete the recipe with the given ID."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
+    conn.commit()
+    conn.close()
