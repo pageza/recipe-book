@@ -5,6 +5,7 @@ import sqlite3
 import json
 import openai
 import gi
+import re
 
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
@@ -128,7 +129,7 @@ class RecipeApp(Gtk.Window):
                 "You are a recipe generating assistant. When given a prompt, generate a recipe "
                 "as a JSON object with the following keys: 'name' (string), 'ingredients' (a comma-separated string), "
                 "'calories' (an integer), and 'recipe_text' (string with full instructions). "
-                "Ensure the JSON is valid." 
+                "Ensure the JSON is valid."
             )},
             {"role": "user", "content": prompt},
         ]
@@ -143,16 +144,25 @@ class RecipeApp(Gtk.Window):
             try:
                 recipe_data = json.loads(raw_text)
                 self.generated_recipe = recipe_data
-                # Prepare a formatted string for the text view:
+
+                # Format ingredients: one per line.
+                ingredients = recipe_data.get('ingredients', '')
+                ingredients_list = [ingredient.strip() for ingredient in ingredients.split(',')]
+                formatted_ingredients = "\n".join(ingredients_list)
+                
+                # Format instructions: ensure each numbered step is on its own line.
+                instructions = recipe_data.get('recipe_text', '').strip()
+                formatted_instructions = re.sub(r'\s*(\d+\.)', r'\n\1', instructions).strip()
+                
                 formatted_text = (
-                    f"Recipe Name: {recipe_data.get('name', '')}\n"
-                    f"Ingredients: {recipe_data.get('ingredients', '')}\n"
+                    f"Recipe Name: {recipe_data.get('name', '')}\n\n"
+                    "Ingredients:\n" + formatted_ingredients + "\n\n"
                     f"Calories: {recipe_data.get('calories', '')}\n\n"
-                    f"Instructions:\n{recipe_data.get('recipe_text', '')}"
+                    "Instructions:\n" + formatted_instructions
                 )
             except json.JSONDecodeError as e:
                 self.generated_recipe = None
-                formatted_text = raw_text  # Fallback if parsing fails
+                formatted_text = raw_text  # Fallback if JSON parsing fails
         except Exception as e:
             formatted_text = f"Error generating recipe: {e}"
             self.generated_recipe = None
